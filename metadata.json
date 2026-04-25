@@ -1,0 +1,6 @@
+{
+  "name": "NairaDash | USD-NGN Market Analyst",
+  "description": "Real-time USD to NGN exchange rate tracking, statistical analysis, and AI-powered market volatility insights.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["Real-time data fetching", "Financial charting", "AI market analysis"]
+}
