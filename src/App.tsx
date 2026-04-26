@@ -192,6 +192,7 @@ export default function App() {
     <div className="min-h-screen bg-[#0C0C0C] text-[#E5E5E5] font-sans selection:bg-blue-500/30">
       <TooltipProvider>
         <Toaster position="bottom-right" theme="dark" richColors />
+        <Analytics />
         {/* Background Grid Overlay */}
       <div className="fixed inset-0 technical-grid opacity-[0.03] pointer-events-none" />
 
