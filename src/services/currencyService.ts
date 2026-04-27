@@ -15,6 +15,8 @@ export interface HistoricalDataPoint {
   date: string;
   rate: number;
   parallelRate?: number;
+  ghsRate?: number;
+  zarRate?: number;
   shortTermTrend?: number;
   longTermTrend?: number;
   event?: string;
@@ -91,6 +93,14 @@ export const getHistoricalSimulatedData = (currentRate: number, timeframe: Timef
     // Parallel rate is usually 5-15% higher than official
     const parallelRate = currentSimRate * (1.08 + Math.random() * 0.05);
     
+    // Simulate other currencies with similar but distinct regional trends
+    // NGN/USD ~ 1400, GHS/USD ~ 13, ZAR/USD ~ 19
+    const ghsSeed = base === 'USD' ? 13 : base === 'GBP' ? 16 : 14;
+    const zarSeed = base === 'USD' ? 19 : base === 'GBP' ? 24 : 20;
+    
+    const ghsRate = ghsSeed * (0.98 + Math.random() * 0.04) * (1 + (i * 0.001));
+    const zarRate = zarSeed * (0.99 + Math.random() * 0.02) * (1 - (i * 0.0005));
+
     const dateStr = date.toISOString().split('T')[0];
     const event = HISTORICAL_EVENTS.find(e => e.date === dateStr);
     
@@ -100,6 +110,8 @@ export const getHistoricalSimulatedData = (currentRate: number, timeframe: Timef
         : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
       rate: parseFloat(currentSimRate.toFixed(2)),
       parallelRate: parseFloat(parallelRate.toFixed(2)),
+      ghsRate: parseFloat(ghsRate.toFixed(2)),
+      zarRate: parseFloat(zarRate.toFixed(2)),
       event: event?.title
     });
   }

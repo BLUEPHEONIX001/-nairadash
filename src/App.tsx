@@ -4,7 +4,6 @@
  */
 
 import { useEffect, useState, useMemo } from 'react';
-import { Analytics } from "@vercel/analytics/next";
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   TrendingUp, 
@@ -56,7 +55,7 @@ import {
 import { Toaster, toast } from 'sonner';
 
 import { fetchLatestRates, getHistoricalSimulatedData, fetchMacroIndicators, type HistoricalDataPoint, type Timeframe, type MacroIndicators, HISTORICAL_EVENTS, type BaseCurrency, UPCOMING_EVENTS, type EconomicEvent } from './services/currencyService';
-import { analyzeVolatility, fetchMarketNews, type NewsItem } from './services/geminiService';
+import { analyzeVolatility, fetchMarketNews, predictWhatIf, type NewsItem } from './services/geminiService';
 
 export default function App() {
   const [loading, setLoading] = useState(true);
@@ -72,9 +71,23 @@ export default function App() {
   const [baseCurrency, setBaseCurrency] = useState<BaseCurrency>('USD');
   const [priceAlerts, setPriceAlerts] = useState<{ id: string; target: number; type: 'above' | 'below' }[]>([]);
   const [newAlertValue, setNewAlertValue] = useState<string>('');
+  const [compareGHS, setCompareGHS] = useState(false);
+  const [compareZAR, setCompareZAR] = useState(false);
+  const [normalizeChart, setNormalizeChart] = useState(false);
   
   // Converter state
   const [usdAmount, setUsdAmount] = useState<string>('1');
+
+  // Economic Calendar sorting
+  const sortedEvents = useMemo(() => {
+    return [...UPCOMING_EVENTS].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  }, []);
+
+  // What-If state
+  const [hypoOil, setHypoOil] = useState<string>('85');
+  const [hypoInflation, setHypoInflation] = useState<string>('31.7');
+  const [simulationResult, setSimulationResult] = useState<string>('');
+  const [isSimulating, setIsSimulating] = useState(false);
 
   const fetchData = async (selectedTimeframe: Timeframe = timeframe, selectedBase: BaseCurrency = baseCurrency) => {
     setIsRefreshing(true);
@@ -148,6 +161,18 @@ export default function App() {
     fetchData(timeframe, base);
   };
 
+  const handleRunSimulation = async () => {
+    setIsSimulating(true);
+    try {
+      const res = await predictWhatIf(parseFloat(hypoOil), parseFloat(hypoInflation), rate);
+      setSimulationResult(res);
+    } catch (err) {
+      toast.error("Simulation failed");
+    } finally {
+      setIsSimulating(false);
+    }
+  };
+
   const filteredNews = useMemo(() => {
     if (!newsFilter) return news;
     const search = newsFilter.toLowerCase().trim();
@@ -159,6 +184,24 @@ export default function App() {
       item.category.toLowerCase() === search
     );
   }, [news, newsFilter]);
+
+  const historyData = useMemo(() => {
+    if (!normalizeChart || history.length === 0) return history;
+    
+    const initialRate = history[0].rate;
+    const initialGHS = history[0].ghsRate || 1;
+    const initialZAR = history[0].zarRate || 1;
+
+    return history.map(p => ({
+      ...p,
+      rate: (p.rate / initialRate) * 100,
+      parallelRate: p.parallelRate ? (p.parallelRate / initialRate) * 100 : undefined,
+      ghsRate: p.ghsRate ? (p.ghsRate / initialGHS) * 100 : undefined,
+      zarRate: p.zarRate ? (p.zarRate / initialZAR) * 100 : undefined,
+      shortTermTrend: p.shortTermTrend ? (p.shortTermTrend / initialRate) * 100 : undefined,
+      longTermTrend: p.longTermTrend ? (p.longTermTrend / initialRate) * 100 : undefined,
+    }));
+  }, [history, normalizeChart]);
 
   const change = useMemo(() => {
     if (history.length < 2) return 0;
@@ -192,7 +235,6 @@ export default function App() {
     <div className="min-h-screen bg-[#0C0C0C] text-[#E5E5E5] font-sans selection:bg-blue-500/30">
       <TooltipProvider>
         <Toaster position="bottom-right" theme="dark" richColors />
-        <Analytics />
         {/* Background Grid Overlay */}
       <div className="fixed inset-0 technical-grid opacity-[0.03] pointer-events-none" />
 
@@ -353,7 +395,7 @@ export default function App() {
             className="lg:col-span-2 space-y-6"
           >
             <Card className="bg-dashboard-card border-dashboard-border ring-1 ring-white/5 h-[450px]">
-              <CardHeader className="pb-2 flex flex-row items-center justify-between">
+              <CardHeader className="pb-2 flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
                   <CardTitle className="text-lg font-mono tracking-tight flex items-center gap-2">
                     <Activity className="w-4 h-4 text-blue-400" />
@@ -361,23 +403,45 @@ export default function App() {
                   </CardTitle>
                   <CardDescription className="text-xs text-dashboard-muted">Historical rate fluctuation vs Time</CardDescription>
                 </div>
-                <div className="flex gap-1">
-                  {(['1D', '7D', '1M', '3M'] as Timeframe[]).map((tf) => (
-                    <Button
-                      key={tf}
-                      variant={timeframe === tf ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => handleTimeframeChange(tf)}
-                      className={`h-7 px-3 text-[10px] font-mono ${timeframe === tf ? 'bg-blue-600' : 'bg-transparent border-dashboard-border'}`}
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex items-center gap-1.5 border-r border-dashboard-border pr-3">
+                    <button 
+                      onClick={() => setNormalizeChart(!normalizeChart)}
+                      className={`px-2 py-0.5 rounded text-[9px] font-mono border transition-all uppercase ${normalizeChart ? 'bg-orange-500/20 border-orange-500/50 text-orange-400' : 'bg-transparent border-white/10 text-white/40'}`}
                     >
-                      {tf}
-                    </Button>
-                  ))}
+                      NORM_100
+                    </button>
+                    <button 
+                      onClick={() => setCompareGHS(!compareGHS)}
+                      className={`px-2 py-0.5 rounded text-[9px] font-mono border transition-all uppercase ${compareGHS ? 'bg-yellow-500/20 border-yellow-500/50 text-yellow-400' : 'bg-transparent border-white/10 text-white/40'}`}
+                    >
+                      GHS_COMP
+                    </button>
+                    <button 
+                      onClick={() => setCompareZAR(!compareZAR)}
+                      className={`px-2 py-0.5 rounded text-[9px] font-mono border transition-all uppercase ${compareZAR ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400' : 'bg-transparent border-white/10 text-white/40'}`}
+                    >
+                      ZAR_COMP
+                    </button>
+                  </div>
+                  <div className="flex gap-1">
+                    {(['1D', '7D', '1M', '3M'] as Timeframe[]).map((tf) => (
+                      <Button
+                        key={tf}
+                        variant={timeframe === tf ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => handleTimeframeChange(tf)}
+                        className={`h-7 px-3 text-[10px] font-mono ${timeframe === tf ? 'bg-blue-600' : 'bg-transparent border-dashboard-border'}`}
+                      >
+                        {tf}
+                      </Button>
+                    ))}
+                  </div>
                 </div>
               </CardHeader>
               <CardContent className="h-[350px] w-full pt-4">
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={history}>
+                  <AreaChart data={historyData}>
                     <defs>
                       <linearGradient id="colorRate" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.3}/>
@@ -410,29 +474,16 @@ export default function App() {
                           const data = payload[0].payload;
                           return (
                             <div className="bg-dashboard-card border border-dashboard-border p-3 rounded-lg shadow-xl text-xs space-y-2">
-                              <p className="font-mono text-dashboard-muted border-b border-dashboard-border pb-1 mb-2">{label}</p>
-                              <div className="flex items-center justify-between gap-4">
-                                <span className="text-blue-400 font-mono">OFFICIAL:</span>
-                                <span className="font-bold text-white">{payload[0].value}</span>
-                              </div>
-                              {payload[1] && (
-                                <div className="flex items-center justify-between gap-4">
-                                  <span className="text-purple-400 font-mono">PARALLEL:</span>
-                                  <span className="font-bold text-white">{payload[1].value}</span>
+                              <p className="font-mono text-dashboard-muted border-b border-dashboard-border pb-1 mb-2">{label} {normalizeChart ? '(Normalized)' : ''}</p>
+                              {payload.map((p, i) => (
+                                <div key={i} className="flex items-center justify-between gap-4">
+                                  <span className="font-mono uppercase text-[9px]" style={{ color: p.color }}>{p.name.replace('Rate', '').trim()}:</span>
+                                  <span className="font-bold text-white tracking-tighter">
+                                    {p.value?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    {normalizeChart ? '%' : ''}
+                                  </span>
                                 </div>
-                              )}
-                              {payload[2] && (
-                                <div className="flex items-center justify-between gap-4">
-                                  <span className="text-blue-200 font-mono text-[9px] uppercase">Trend_S:</span>
-                                  <span className="font-bold text-blue-200">{payload[2].value}</span>
-                                </div>
-                              )}
-                              {payload[3] && (
-                                <div className="flex items-center justify-between gap-4">
-                                  <span className="text-gray-400 font-mono text-[9px] uppercase">Trend_L:</span>
-                                  <span className="font-bold text-gray-400">{payload[3].value}</span>
-                                </div>
-                              )}
+                              ))}
                               {data.event && (
                                 <div className="mt-2 pt-2 border-t border-dashboard-border">
                                   <p className="text-orange-400 font-bold uppercase text-[9px] mb-1">Market Event</p>
@@ -470,9 +521,30 @@ export default function App() {
                       strokeWidth={1}
                       strokeDasharray="5 5"
                     />
+                    {compareGHS && (
+                      <Line 
+                        type="monotone" 
+                        dataKey="ghsRate" 
+                        name="Ghana GHS"
+                        stroke="#eab308" 
+                        strokeWidth={2} 
+                        dot={false}
+                      />
+                    )}
+                    {compareZAR && (
+                      <Line 
+                        type="monotone" 
+                        dataKey="zarRate" 
+                        name="SA ZAR"
+                        stroke="#10b981" 
+                        strokeWidth={2} 
+                        dot={false}
+                      />
+                    )}
                     <Line 
                       type="monotone" 
                       dataKey="shortTermTrend" 
+                      name="Trend S"
                       stroke="#60A5FA" 
                       strokeWidth={1} 
                       dot={false}
@@ -481,6 +553,7 @@ export default function App() {
                     <Line 
                       type="monotone" 
                       dataKey="longTermTrend" 
+                      name="Trend L"
                       stroke="#4B5563" 
                       strokeWidth={1} 
                       dot={false}
@@ -570,34 +643,34 @@ export default function App() {
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: -10 }}
                         onClick={() => setSelectedNews(item)}
-                        className="p-4 border-b border-dashboard-border last:border-0 hover:bg-white/5 transition-all cursor-pointer relative overflow-hidden group"
+                        className="p-4 border-b border-dashboard-border last:border-0 hover:bg-white/5 transition-all cursor-pointer relative overflow-hidden group flex gap-4"
                       >
-                        <div className="flex justify-between items-start mb-1">
-                          <Badge className={`text-[9px] h-4 px-1.5 font-mono ${
-                            item.impact === 'positive' ? 'bg-green-500/20 text-green-400' : 
-                            item.impact === 'negative' ? 'bg-red-500/20 text-red-400' : 
-                            'bg-gray-500/20 text-gray-400'
-                          }`}>
-                            {item.impact === 'positive' ? 'UP' : item.impact === 'negative' ? 'DOWN' : 'NEU'}
-                          </Badge>
-                          <div className="flex items-center gap-2">
-                            <span className="text-[9px] font-mono text-dashboard-muted">{item.timestamp}</span>
-                            <a 
-                              href={`https://reuters.com/search/news?blob=${encodeURIComponent(item.title)}`} 
-                              target="_blank" 
-                              rel="noopener noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                              className="flex items-center gap-1 text-[9px] font-mono text-dashboard-muted hover:text-blue-400 transition-colors border-l border-dashboard-border pl-2"
-                            >
-                              <ExternalLink className="w-2.5 h-2.5" />
-                              <span>SOURCE</span>
-                            </a>
-                          </div>
+                        <div className="w-16 h-16 shrink-0 rounded-lg overflow-hidden border border-dashboard-border bg-dashboard-bg group-hover:border-blue-500/50 transition-colors">
+                          <img 
+                            src={item.imageUrl} 
+                            alt="" 
+                            className="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-all duration-500"
+                            referrerPolicy="no-referrer"
+                          />
                         </div>
-                        <h4 className="text-xs font-bold mb-1 leading-tight group-hover:text-blue-400 transition-colors">{item.title}</h4>
-                        <p className="text-[10px] text-dashboard-muted leading-relaxed line-clamp-2">
-                          {item.summary}
-                        </p>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex justify-between items-start mb-1">
+                            <Badge className={`text-[9px] h-4 px-1.5 font-mono ${
+                              item.impact === 'positive' ? 'bg-green-500/20 text-green-400' : 
+                              item.impact === 'negative' ? 'bg-red-500/20 text-red-400' : 
+                              'bg-gray-500/20 text-gray-400'
+                            }`}>
+                              {item.impact === 'positive' ? 'UP' : item.impact === 'negative' ? 'DOWN' : 'NEU'}
+                            </Badge>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[9px] font-mono text-dashboard-muted">{item.timestamp}</span>
+                            </div>
+                          </div>
+                          <h4 className="text-xs font-bold mb-1 leading-tight group-hover:text-blue-400 transition-colors line-clamp-1">{item.title}</h4>
+                          <p className="text-[10px] text-dashboard-muted leading-relaxed line-clamp-2">
+                            {item.summary}
+                          </p>
+                        </div>
                       </motion.div>
                     )) : (
                       <div className="p-8 text-center">
@@ -702,12 +775,21 @@ export default function App() {
                 </div>
               </CardContent>
             </Card>
+          </motion.div>
+        </div>
 
+        {/* Analytics & Interaction Tools */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-6">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.6 }}
+          >
             {/* Price Alerts Card */}
-            <Card className="bg-dashboard-card border-dashboard-border ring-1 ring-white/5">
-              <CardHeader className="pb-3">
+            <Card className="bg-dashboard-card border-dashboard-border ring-1 ring-white/5 h-full">
+              <CardHeader className="pb-3 text-orange-400">
                 <CardTitle className="text-xs font-mono uppercase tracking-[0.2em] flex items-center gap-2">
-                  <Bell className="w-4 h-4 text-orange-400" />
+                  <Bell className="w-4 h-4" />
                   Price_Alert_System
                 </CardTitle>
                 <CardDescription className="text-[10px]">Real-time market threshold notifications</CardDescription>
@@ -776,6 +858,72 @@ export default function App() {
               </CardContent>
             </Card>
           </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.7 }}
+          >
+            {/* What-If Forecaster Card */}
+            <Card className="bg-dashboard-card border-dashboard-border ring-1 ring-white/5 h-full">
+              <CardHeader className="pb-3 border-b border-dashboard-border mb-4">
+                <CardTitle className="text-xs font-mono uppercase tracking-[0.2em] flex items-center gap-2 text-cyan-400">
+                  <Zap className="w-4 h-4" />
+                  AI_What_If_Forecaster
+                </CardTitle>
+                <CardDescription className="text-[10px]">Simulate macroeconomic impact on NGN</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-[9px] font-mono text-dashboard-muted uppercase">Hypo_Oil_Price ($)</label>
+                    <Input 
+                      type="number"
+                      value={hypoOil}
+                      onChange={(e) => setHypoOil(e.target.value)}
+                      className="h-8 bg-dashboard-bg border-dashboard-border text-[11px] focus-visible:ring-cyan-500/50 font-mono text-white"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[9px] font-mono text-dashboard-muted uppercase">Hypo_Inflation (%)</label>
+                    <Input 
+                      type="number"
+                      value={hypoInflation}
+                      onChange={(e) => setHypoInflation(e.target.value)}
+                      className="h-8 bg-dashboard-bg border-dashboard-border text-[11px] focus-visible:ring-cyan-500/50 font-mono text-white"
+                    />
+                  </div>
+                </div>
+
+                <Button 
+                  onClick={handleRunSimulation}
+                  disabled={isSimulating}
+                  className="w-full h-8 bg-cyan-600 hover:bg-cyan-500 text-white text-[10px] font-mono tracking-widest"
+                >
+                  {isSimulating ? (
+                    <RefreshCcw className="w-3.5 h-3.5 animate-spin mr-2" />
+                  ) : (
+                    <BrainCircuit className="w-3.5 h-3.5 mr-2" />
+                  )}
+                  {isSimulating ? 'COMPUTING...' : 'RUN_SIMULATION'}
+                </Button>
+
+                <AnimatePresence>
+                  {simulationResult && (
+                    <motion.div 
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      className="p-3 rounded-lg bg-cyan-500/5 border border-cyan-500/20"
+                    >
+                      <p className="text-[11px] leading-relaxed text-cyan-100 italic">
+                        {simulationResult}
+                      </p>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </CardContent>
+            </Card>
+          </motion.div>
         </div>
 
         {/* Economic Calendar */}
@@ -786,50 +934,61 @@ export default function App() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
-            {UPCOMING_EVENTS.map((event) => (
-              <motion.div
-                key={event.id}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                whileHover={{ y: -5 }}
-                className="bg-dashboard-card border border-dashboard-border rounded-xl p-4 relative group overflow-hidden"
-              >
-                <div className={`absolute top-0 left-0 w-full h-1 ${
-                  event.impact === 'high' ? 'bg-red-500' : 
-                  event.impact === 'medium' ? 'bg-orange-500' : 
-                  'bg-blue-500'
-                } opacity-50`} />
-                
-                <div className="flex justify-between items-start mb-3">
-                  <div className="p-1.5 rounded bg-white/5">
-                    <Calendar className="w-4 h-4 text-dashboard-muted" />
+            {sortedEvents.map((event) => {
+              const daysLeft = Math.ceil((new Date(event.date).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+              
+              return (
+                <motion.div
+                  key={event.id}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  whileHover={{ y: -5 }}
+                  className="bg-dashboard-card border border-dashboard-border rounded-xl p-4 relative group overflow-hidden"
+                >
+                  <div className={`absolute top-0 left-0 w-full h-1 ${
+                    event.impact === 'high' ? 'bg-red-500' : 
+                    event.impact === 'medium' ? 'bg-orange-500' : 
+                    'bg-blue-500'
+                  } opacity-50`} />
+                  
+                  <div className="flex justify-between items-start mb-3">
+                    <div className="p-1.5 rounded bg-white/5">
+                      <Calendar className="w-4 h-4 text-dashboard-muted" />
+                    </div>
+                    <div className="flex flex-col items-end gap-1">
+                      <Badge variant="outline" className={`text-[8px] font-mono tracking-tight uppercase ${
+                        event.impact === 'high' ? 'border-red-500/30 text-red-400 bg-red-400/5' : 
+                        event.impact === 'medium' ? 'border-orange-500/30 text-orange-400 bg-orange-400/5' : 
+                        'border-blue-500/30 text-blue-400 bg-blue-400/5'
+                      }`}>
+                        {event.impact}_IMPACT
+                      </Badge>
+                      {daysLeft > 0 && (
+                        <span className="text-[8px] font-mono text-dashboard-muted italic whitespace-nowrap">
+                          {daysLeft}D_REMAINING
+                        </span>
+                      )}
+                    </div>
                   </div>
-                  <Badge variant="outline" className={`text-[8px] font-mono tracking-tight uppercase ${
-                    event.impact === 'high' ? 'border-red-500/30 text-red-400 bg-red-400/5' : 
-                    event.impact === 'medium' ? 'border-orange-500/30 text-orange-400 bg-orange-400/5' : 
-                    'border-blue-500/30 text-blue-400 bg-blue-400/5'
-                  }`}>
-                    {event.impact}_IMPACT
-                  </Badge>
-                </div>
 
-                <div className="space-y-1">
-                  <p className="text-[10px] font-mono text-dashboard-muted uppercase tracking-tighter">{event.date}</p>
-                  <h4 className="text-xs font-bold leading-tight line-clamp-1">{event.title}</h4>
-                </div>
-
-                <p className="text-[10px] text-dashboard-muted mt-3 line-clamp-2 leading-relaxed">
-                  {event.description}
-                </p>
-
-                <div className="mt-4 pt-3 border-t border-dashboard-border flex items-center justify-between">
-                  <span className="text-[9px] font-mono text-dashboard-muted uppercase tracking-widest">{event.category}</span>
-                  <div className="flex items-center gap-1">
-                    <Zap className={`w-3 h-3 ${event.impact === 'high' ? 'text-red-400' : 'text-dashboard-muted'}`} />
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-mono text-dashboard-muted uppercase tracking-tighter">{event.date}</p>
+                    <h4 className="text-xs font-bold leading-tight line-clamp-1 group-hover:text-blue-400 transition-colors">{event.title}</h4>
                   </div>
-                </div>
-              </motion.div>
-            ))}
+
+                  <p className="text-[10px] text-dashboard-muted mt-3 line-clamp-2 leading-relaxed">
+                    {event.description}
+                  </p>
+
+                  <div className="mt-4 pt-3 border-t border-dashboard-border flex items-center justify-between">
+                    <span className="text-[9px] font-mono text-dashboard-muted uppercase tracking-widest">{event.category}</span>
+                    <div className="flex items-center gap-1">
+                      <Zap className={`w-3 h-3 ${event.impact === 'high' ? 'text-red-400 animate-pulse' : 'text-dashboard-muted'}`} />
+                    </div>
+                  </div>
+                </motion.div>
+              );
+            })}
           </div>
         </div>
 
@@ -894,9 +1053,22 @@ export default function App() {
                 </DialogHeader>
 
                 <div className="space-y-6 pt-4">
+                  <div className="w-full h-48 rounded-xl overflow-hidden border border-dashboard-border relative">
+                    <img 
+                      src={selectedNews.imageUrl} 
+                      alt="" 
+                      className="w-full h-full object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-dashboard-card to-transparent opacity-60" />
+                  </div>
+
                   <div className="space-y-4">
-                    <p className="text-sm text-gray-300 leading-relaxed">
+                    <p className="text-sm text-gray-300 leading-relaxed font-medium">
                       {selectedNews.summary}
+                    </p>
+                    <p className="text-[13px] text-gray-400 leading-relaxed">
+                      {selectedNews.content}
                     </p>
                     <div className="p-4 rounded-xl bg-blue-500/5 border border-blue-500/10 space-y-3">
                       <h5 className="text-[11px] font-mono font-bold text-blue-400 uppercase tracking-widest flex items-center gap-2">
